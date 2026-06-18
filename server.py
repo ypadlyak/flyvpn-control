@@ -192,7 +192,7 @@ def _build_bot():  # noqa: ANN202
         chat = update.effective_chat
         return bool(chat) and chat.id in ALLOWED_IDS
 
-    def menu() -> InlineKeyboardMarkup:
+    def menu(active: bool) -> InlineKeyboardMarkup:
         rows, row = [], []
         for code, label in FLY_REGIONS:
             row.append(InlineKeyboardButton(label, callback_data=f"sw:{code}"))
@@ -201,7 +201,9 @@ def _build_bot():  # noqa: ANN202
                 row = []
         if row:
             rows.append(row)
-        rows.append([InlineKeyboardButton("⏹ Stop VPN", callback_data="stop")])
+        # Only offer Stop when a node is actually running (mirrors the web panel).
+        if active:
+            rows.append([InlineKeyboardButton("⏹ Stop VPN", callback_data="stop")])
         return InlineKeyboardMarkup(rows)
 
     async def start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -213,7 +215,7 @@ def _build_bot():  # noqa: ANN202
             f"🟢 Connected — {s.region_label}" if s.active else "⚪ No exit node running"
         )
         await update.message.reply_text(
-            f"{head}\n\nPick a country:", reply_markup=menu()
+            f"{head}\n\nPick a country:", reply_markup=menu(s.active)
         )
 
     async def on_button(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -227,17 +229,18 @@ def _build_bot():  # noqa: ANN202
             if data == "stop":
                 await q.edit_message_text("⏹ Stopping…")
                 await asyncio.to_thread(ctrl.stop)
-                await q.edit_message_text("⏹ VPN stopped.", reply_markup=menu())
+                await q.edit_message_text("⏹ VPN stopped.", reply_markup=menu(False))
                 return
             code = data.split(":", 1)[1]
             await q.edit_message_text(f"🚀 Switching to {code}…")
             s = await asyncio.to_thread(ctrl.switch, code)
             await q.edit_message_text(
                 f"✅ {s.region_label}\nRe-pick the exit node in the Tailscale app.",
-                reply_markup=menu(),
+                reply_markup=menu(s.active),
             )
         except ControllerError as e:
-            await q.edit_message_text(f"⚠ {e}", reply_markup=menu())
+            # A failed switch destroys the old node in preflight, so nothing runs.
+            await q.edit_message_text(f"⚠ {e}", reply_markup=menu(False))
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler(["start", "menu", "vpn"], start))
