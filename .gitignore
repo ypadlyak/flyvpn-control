@@ -1,0 +1,12 @@
+# secrets & runtime
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -1,0 +1,5 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-telegram-bot>=21.9
+# fly-vpn provides the `flyexit` package we orchestrate.
+fly-vpn @ git+https://github.com/invilso/fly-vpn.git

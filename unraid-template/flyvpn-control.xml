@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>flyvpn-control</Name>
+  <!-- Image is published to GHCR by the build-and-push GitHub Action. -->
+  <Repository>ghcr.io/ypadlyak/flyvpn-control:latest</Repository>
+  <Registry>https://github.com/ypadlyak/flyvpn-control/pkgs/container/flyvpn-control</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/ypadlyak/flyvpn-control/issues</Support>
+  <Project>https://github.com/ypadlyak/flyvpn-control</Project>
+  <Overview>
+    Web panel + Telegram bot to control invilso/fly-vpn from your server: spin up an
+    ephemeral Tailscale exit node on Fly.io in any of 18 regions and switch country fast
+    (tap a flag). The server only orchestrates — your phones use the Tailscale app to
+    select the auto-approved exit node. Great for "Netflix in another country, now."
+
+    Requires a Fly.io API token and a Tailscale Admin API key (ACL read/write + auth-key
+    create scopes). Telegram bot is optional. After each country switch, re-pick the exit
+    node in the Tailscale app on your devices (fly-vpn is one-node-at-a-time today).
+
+    Visit /healthz to verify your tokens and scopes.
+  </Overview>
+  <Category>Network:VPN Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8787]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/ypadlyak/flyvpn-control/main/unraid-template/flyvpn-control.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/ypadlyak/flyvpn-control/main/unraid-template/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="8787" Default="8787" Mode="tcp"
+    Description="Port for the web control panel." Type="Port" Display="always"
+    Required="true" Mask="false">8787</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/flyvpn-control" Mode="rw"
+    Description="Persistent storage for the fly-vpn usage/stats database." Type="Path"
+    Display="always" Required="true" Mask="false">/mnt/user/appdata/flyvpn-control</Config>
+  <Config Name="FLY_API_TOKEN" Target="FLY_API_TOKEN" Default="" Mode=""
+    Description="Fly.io API token (flyctl tokens create org -o personal)." Type="Variable"
+    Display="always" Required="true" Mask="true"/>
+  <Config Name="FLY_ORG" Target="FLY_ORG" Default="personal" Mode=""
+    Description="Fly.io organisation slug (usually 'personal')." Type="Variable"
+    Display="always" Required="true" Mask="false">personal</Config>
+  <Config Name="TAILSCALE_API_KEY" Target="TAILSCALE_API_KEY" Default="" Mode=""
+    Description="Tailscale Admin API key with ACL read/write + auth-key create scopes."
+    Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="TELEGRAM_BOT_TOKEN" Target="TELEGRAM_BOT_TOKEN" Default="" Mode=""
+    Description="Optional. Telegram bot token from @BotFather to enable the bot."
+    Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TELEGRAM_ALLOWED_IDS" Target="TELEGRAM_ALLOWED_IDS" Default="" Mode=""
+    Description="Optional but recommended. Comma-separated Telegram chat IDs allowed to control the VPN."
+    Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="VM_MEMORY" Target="VM_MEMORY" Default="512" Mode=""
+    Description="Memory (MB) for the Fly exit-node machine." Type="Variable"
+    Display="advanced" Required="false" Mask="false">512</Config>
+  <Config Name="TS_LOGIN_SERVER" Target="TS_LOGIN_SERVER" Default="" Mode=""
+    Description="Optional. Headscale server URL for self-hosted control servers."
+    Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>
