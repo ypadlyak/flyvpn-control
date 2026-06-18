@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import secrets
 import threading
+import time
 from dataclasses import dataclass
 
 from flyexit.constants import FLY_REGIONS
@@ -28,6 +29,9 @@ FLY_ORG = os.environ.get("FLY_ORG", "personal")
 TS_API_KEY = os.environ.get("TAILSCALE_API_KEY", "")
 TS_LOGIN_SERVER = os.environ.get("TS_LOGIN_SERVER", "")  # Headscale, optional
 VM_MEMORY = int(os.environ.get("VM_MEMORY", "512"))
+
+# Auto-teardown: stop a node after this many hours up (cost cap). 0 disables.
+MAX_NODE_HOURS = float(os.environ.get("MAX_NODE_HOURS", "8"))
 
 
 class ControllerError(RuntimeError):
@@ -53,6 +57,42 @@ class Check:
 
 def _new_session() -> VPNSession:
     return VPNSession(ts_api_key=TS_API_KEY, ts_login_server=TS_LOGIN_SERVER)
+
+
+def _purge_exit_devices() -> int:
+    """Delete every tailnet device named ``fly-vpn-exit`` (SaaS only).
+
+    Keeps the exit node's name stable across country switches: a lingering
+    offline ephemeral device would otherwise force the next node to register as
+    ``fly-vpn-exit-1``. Best-effort — never raises. Returns the count removed.
+    """
+    if not TS_API_KEY or TS_LOGIN_SERVER:
+        return 0
+
+    import httpx
+
+    from flyexit.constants import TS_EXIT_HOSTNAME
+    from flyexit.tailscale_api import TailscaleAPIClient
+
+    client = TailscaleAPIClient(TS_API_KEY)
+    removed = 0
+    try:
+        resp = httpx.get(
+            "https://api.tailscale.com/api/v2/tailnet/-/devices",
+            headers={"Authorization": f"Bearer {TS_API_KEY}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for d in resp.json().get("devices", []):
+            hostname = d.get("hostname", "")
+            name = d.get("name", "")
+            if hostname == TS_EXIT_HOSTNAME or name.startswith(f"{TS_EXIT_HOSTNAME}."):
+                device_id = d.get("id") or d.get("nodeId")
+                if device_id and client.delete_device(device_id):
+                    removed += 1
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return removed
 
 
 def _resolve_app_name() -> str:
@@ -84,6 +124,11 @@ class Controller:
         # with another switch/stop, or two people tapping at once corrupt state.
         self._lock = threading.Lock()
         self._app_name = _resolve_app_name()
+        # Wall-clock time the current node was launched (for max-age auto-stop).
+        # None when nothing is running. Boot-reconcile guarantees consistency:
+        # any node from a previous process is destroyed, so a live process never
+        # has an unknown launch time.
+        self._launched_at: float | None = None
 
     # -- validation --------------------------------------------------------
 
@@ -193,6 +238,11 @@ class Controller:
                 raise ControllerError(self._explain_preflight(pf))
             self._app_name = pf.app_name
 
+            # Remove the previous (now-destroyed) exit-node device so the new one
+            # reclaims the exact hostname `fly-vpn-exit` instead of getting a
+            # `-1`/`-2` suffix from the lingering ephemeral device.
+            _purge_exit_devices()
+
             lr = session.launch(pf.app_name, region, vm_memory=VM_MEMORY)
             if lr.status is not LaunchStatus.OK:
                 detail = lr.error or "machine failed to start"
@@ -203,6 +253,7 @@ class Controller:
             # Deliberately NOT calling session.wait_and_connect(): the phones
             # are the consumers, not this box. The node is already an
             # auto-approved exit node the moment it joins the tailnet.
+            self._launched_at = time.time()
             return Status(
                 active=True,
                 region=region,
@@ -211,10 +262,53 @@ class Controller:
             )
 
     def stop(self) -> Status:
-        """Destroy the Fly app (and its machine). Ephemeral TS device self-removes."""
+        """Destroy the Fly app (and its machine), then remove the tailnet device."""
         with self._lock:
             destroy_app(self._app_name)
+            # Remove the device now rather than waiting for ephemeral cleanup, so
+            # it doesn't linger as a stale "offline" entry in the exit-node picker.
+            _purge_exit_devices()
+            self._launched_at = None
             return Status(active=False)
+
+    # -- auto-teardown -----------------------------------------------------
+
+    def reconcile_boot(self) -> bool:
+        """Kill-switch: destroy any node left over from a previous process.
+
+        Called once at startup. A graceful stop tears the node down, but a hard
+        crash (SIGKILL) or host reboot can leave a Fly machine billing. We can't
+        know its launch time, so the safe move is to destroy it — the node is
+        cheap to re-launch with a tap.  Returns True if something was cleaned up.
+        """
+        from flyexit.fly_api import get_client
+
+        client = get_client()
+        if client is None:
+            return False
+        try:
+            existed = client.app_exists(self._app_name)
+        finally:
+            client.close()
+        if existed:
+            destroy_app(self._app_name)
+        self._launched_at = None
+        return existed
+
+    def autostop_check(self) -> str | None:
+        """Stop the node if it has exceeded its max age. Returns a reason or None.
+
+        Meant to be polled periodically. Idle-based stopping isn't implemented:
+        the orchestrator can't see phone-through-node traffic, and it's always
+        online itself, so there's no reliable idle signal — max age is the cap.
+        """
+        started = self._launched_at
+        if started is None or MAX_NODE_HOURS <= 0:
+            return None
+        if time.time() - started >= MAX_NODE_HOURS * 3600:
+            self.stop()
+            return f"max age {MAX_NODE_HOURS:g}h reached"
+        return None
 
     # -- helpers -----------------------------------------------------------
 

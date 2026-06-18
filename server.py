@@ -77,6 +77,7 @@ def _page(status: Status) -> str:
   button:active {{ transform:scale(.98); }}
   #stop {{ width:100%; margin-top:16px; padding:16px; font-size:1.05rem;
            border-radius:12px; border:1px solid #5c2b2b; background:#2a1414; color:#ff9b9b; }}
+  #stop.hidden {{ display:none; }}
   #toast {{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
             background:#1a1b22; border:1px solid #2a2c36; padding:12px 18px;
             border-radius:10px; opacity:0; transition:opacity .2s; max-width:90%; }}
@@ -86,7 +87,7 @@ def _page(status: Status) -> str:
 <h1>Fly VPN <span class=dim>· exit node</span></h1>
 <div id=banner>{banner}</div>
 <div class=grid id=grid>{buttons}</div>
-<button id=stop onclick="stop()">⏹ Stop VPN</button>
+<button id=stop class="{"" if status.active else "hidden"}" onclick="stop()">⏹ Stop VPN</button>
 <div id=toast></div>
 <script>
 const active = {('"'+status.region+'"') if status.region else "null"};
@@ -105,6 +106,7 @@ async function call(url) {{
     const d = await r.json();
     if (!r.ok) {{ toast('⚠ ' + (d.detail||'failed')); return; }}
     window._active = d.active ? d.region : null; mark();
+    document.getElementById('stop').classList.toggle('hidden', !d.active);
     document.getElementById('banner').innerHTML = d.active
       ? '🟢 Connected — <b>'+d.region_label+'</b>'
       : '⚪ No exit node running';
@@ -244,9 +246,31 @@ def _build_bot():  # noqa: ANN202
     return application
 
 
+async def _monitor_loop() -> None:
+    """Poll the controller for auto-stop conditions (max-age cost cap)."""
+    interval = int(os.environ.get("MONITOR_INTERVAL", "120"))
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            reason = await asyncio.to_thread(ctrl.autostop_check)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Auto-stop check failed: %s", exc)
+            continue
+        if reason:
+            log.info("🛑 Auto-stopped exit node: %s", reason)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     await _log_credential_checks()
+
+    # Kill-switch: clean up any node left billing by a previous unclean exit.
+    if await asyncio.to_thread(ctrl.reconcile_boot):
+        log.info("🧹 Boot reconcile: destroyed a leftover exit node.")
+
+    # Background cost cap.
+    app.state.monitor = asyncio.create_task(_monitor_loop())
+
     if not BOT_TOKEN:
         log.info("TELEGRAM_BOT_TOKEN not set — web panel only.")
         return
@@ -266,6 +290,22 @@ async def _startup() -> None:
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    # Teardown-on-stop: a graceful `docker stop` (SIGTERM) should not leave a
+    # node billing. Hard kills (SIGKILL) are covered by boot reconcile instead.
+    monitor = getattr(app.state, "monitor", None)
+    if monitor is not None:
+        monitor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await monitor
+
+    try:
+        s = await asyncio.to_thread(ctrl.status)
+        if s.active:
+            log.info("Shutting down — tearing down active exit node (%s).", s.region)
+            await asyncio.to_thread(ctrl.stop)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Shutdown teardown failed: %s", exc)
+
     bot = getattr(app.state, "bot", None)
     if bot is None:
         return

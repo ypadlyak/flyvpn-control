@@ -57,6 +57,9 @@
   <Config Name="VM_MEMORY" Target="VM_MEMORY" Default="512" Mode=""
     Description="Memory (MB) for the Fly exit-node machine." Type="Variable"
     Display="advanced" Required="false" Mask="false">512</Config>
+  <Config Name="MAX_NODE_HOURS" Target="MAX_NODE_HOURS" Default="8" Mode=""
+    Description="Auto-stop the exit node after this many hours (cost safety net; 0 = never)."
+    Type="Variable" Display="advanced" Required="false" Mask="false">8</Config>
   <Config Name="TS_LOGIN_SERVER" Target="TS_LOGIN_SERVER" Default="" Mode=""
     Description="Optional. Headscale server URL for self-hosted control servers."
     Type="Variable" Display="advanced" Required="false" Mask="false"/>

@@ -88,18 +88,33 @@ A ❌ means switching won't work until you fix that token/scope. You can re-chec
 time at **`http://<host>:8787/healthz`** — returns `200` when all green, `503` otherwise.
 The Tailscale check is idempotent and also ensures the exit-node auto-approver exists.
 
+## Reaching the panel while an exit node is active
+
+When a phone selects the exit node, Tailscale routes **all** its traffic through the
+node — including to your home LAN. So open the panel at the **server's Tailscale
+address**, not its LAN IP: traffic between tailnet peers goes direct and bypasses the
+exit node, so `http://<server>.<tailnet>.ts.net:8787` (or the `100.x` Tailscale IP)
+stays reachable. Bookmark *that* on the phones. (Alternatively, enable "Allow local
+network access" in the Tailscale exit-node settings.)
+
+The Telegram bot is unaffected — it runs on the server and reaches Telegram over the
+server's own connection regardless of which exit node a phone uses.
+
 ## Securing the web panel
 
-The panel has no login. Keep it private by **only exposing it on your LAN/tailnet**
-— don't port-forward 8787 to the internet. If you want it reachable away from home,
-put the Unraid box on your tailnet and reach the panel over its Tailscale IP, or just
-use the Telegram bot (which works from anywhere and is access-listed).
+The panel has no login. Keep it private by **only exposing it on your tailnet** —
+don't port-forward 8787 to the internet. The Telegram bot works from anywhere and is
+access-listed (`TELEGRAM_ALLOWED_IDS`).
 
-## Cost
+## Cost & auto-teardown
 
-Same as fly-vpn: per-second Fly billing, typically well under $1/month for casual use.
-Stop the node (`⏹`) when you're done and billing stops. Nodes are ephemeral and clean
-themselves up.
+Per-second Fly billing, typically well under $1/month for casual use. Stop the node
+(`⏹`) when done and billing stops. Three safety nets prevent a forgotten node from
+billing forever:
+
+- **Max age** — the node auto-stops after `MAX_NODE_HOURS` (default 8; `0` disables).
+- **Graceful stop** — stopping/restarting the container tears the node down.
+- **Boot reconcile** — on startup, any node left over from a hard crash is destroyed.
 
 ## Files
 
