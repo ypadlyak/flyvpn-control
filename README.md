@@ -1,19 +1,21 @@
 # flyvpn-control
 
 A tiny **web panel + Telegram bot** that drives [invilso/fly-vpn](https://github.com/invilso/fly-vpn)
-headlessly from your Unraid server, so you (and your wife) can switch the exit-node
-country fast — tap a flag, done. Built for the "I want Netflix in another country
-*now*" case.
+headlessly from a home server, so anyone in the house can switch the exit-node country
+fast — tap a flag, done. Built for the "I want Netflix in another country *now*" case.
 
 ```
- phone ──▶ web panel / Telegram bot ──▶ flyvpn-control (Unraid) ──▶ Fly.io machine (exit node)
-                                                                          │
- phone (Tailscale app) ◀───────────── auto-approved exit node ◀──────────┘
+ phone ──▶ web panel / Telegram bot ──▶ flyvpn-control (home server) ──▶ Fly.io machine (exit node)
+                                                                              │
+ phone (Tailscale app) ◀───────────── auto-approved exit node ◀──────────────┘
 ```
 
-The Unraid box is only the **orchestrator** — it spins exit nodes up/down but never
-routes its own traffic. Your **phones are the consumers**: the Tailscale Android app
-selects the exit node.
+The server is only the **orchestrator** — it spins exit nodes up/down but never routes
+its own traffic. Your **phones/laptops are the consumers**: the Tailscale app selects
+the exit node.
+
+It runs anywhere Docker runs — a Raspberry Pi, a NAS, a VPS, an old laptop, or Unraid.
+A single container holds both the web panel and the Telegram bot.
 
 ## How switching works
 
@@ -22,57 +24,97 @@ selects the exit node.
    ensures the Tailscale ACL auto-approves the exit node) then `launch(region)`
    (boots a fresh `tailscale/tailscale` machine in that region, ~5 s).
 3. The node joins your tailnet as an **auto-approved exit node** named `fly-vpn-exit`.
-4. On each phone, open the **Tailscale app → exit node → fly-vpn-exit**.
+4. On each device, open the **Tailscale app → exit node → fly-vpn-exit**.
 
-> ⚠️ Because each switch tears the node down and brings up a *new* device, your phones
-> must **re-pick the exit node** in the Tailscale app after a country change (two taps).
-> That's a limitation of fly-vpn today (one node at a time; "switch without teardown"
-> is on its roadmap).
+> ⚠️ Each switch recreates the node, so your devices must **re-pick the exit node** in
+> the Tailscale app after a country change (two taps). fly-vpn runs one node at a time;
+> the node name stays `fly-vpn-exit`, so the picker never clutters with stale entries.
 
 ## Prerequisites
 
-- A **Fly.io** account + API token (`flyctl tokens create org -o personal`, or copy
-  `access_token` from `~/.fly/config.yml`).
+- A **home server** (or any always-on box) with **Docker**.
+- A **Fly.io** account with a payment method, and an API token
+  (`flyctl tokens create org -o personal`, or copy `access_token` from `~/.fly/config.yml`).
 - A **Tailscale** account + Admin **API key** with ACL read/write, auth-key create,
   and devices write scopes: <https://login.tailscale.com/admin/settings/keys>.
-- The official **Tailscale app** on each Android device, all logged into the same tailnet.
-- Unraid with Docker (and the *Compose Manager* plugin if you want compose).
+- The official **Tailscale app** on each device (iOS/Android/desktop), all logged into
+  the same tailnet.
 
-## Deploy on Unraid
+## Deploy
 
-### Option A — docker compose (Compose Manager plugin)
+### Option A — Docker Compose (recommended, works on any host)
 
-1. Copy this folder to e.g. `/boot/config/plugins/compose/flyvpn-control/` or any share.
-2. `cp .env.example .env` and fill in your tokens.
-3. `docker compose up -d --build`.
-4. Open `http://<unraid-ip>:8787` and add it to your phone's home screen.
+```bash
+git clone https://github.com/ypadlyak/flyvpn-control.git
+cd flyvpn-control
+cp .env.example .env          # then edit .env and fill in your tokens
+docker compose up -d --build
+```
 
-### Option B — Unraid "Add Container" (Docker tab)
+Open `http://<server>:8787`. (See *Reaching the panel* below for the right address to
+bookmark on phones.)
 
-Build/push the image first (`docker build -t youruser/flyvpn-control .` then push), or
-point Unraid at this repo. Then add a container with:
+### Option B — plain `docker run` (no compose)
 
-| Field | Value |
-|-------|-------|
-| Repository | `youruser/flyvpn-control:latest` |
-| Network | `bridge` |
-| Port | `8787` → `8787` |
-| Path | `/data` → `/mnt/user/appdata/flyvpn-control` |
-| Var `FLY_API_TOKEN` | *your Fly token* |
-| Var `FLY_ORG` | `personal` |
-| Var `TAILSCALE_API_KEY` | *your TS API key* |
-| Var `TELEGRAM_BOT_TOKEN` | *optional* |
-| Var `TELEGRAM_ALLOWED_IDS` | *optional, e.g.* `111111,222222` |
+```bash
+docker build -t flyvpn-control .
+docker run -d --name flyvpn-control --restart unless-stopped \
+  -p 8787:8787 \
+  -v "$PWD/data:/data" \
+  --env-file .env \
+  flyvpn-control
+```
 
-## Telegram bot (optional but great for "from anywhere")
+`--env-file .env` reads the same file as compose. On hosts without `docker compose`
+(e.g. a stock Unraid or a minimal box), this is the simplest path.
 
-1. Message **@BotFather** → `/newbot` → copy the token into `TELEGRAM_BOT_TOKEN`.
-2. Message **@userinfobot** from each phone to get the numeric chat IDs; put them
-   (comma-separated) in `TELEGRAM_ALLOWED_IDS` so only you two can control it.
-3. Restart the container. In the chat: `/start` → tap a country, or `⏹ Stop VPN`.
+### Option C — Unraid
 
-> The bot is reachable by anyone who knows its name — **always set
-> `TELEGRAM_ALLOWED_IDS`**. With it empty the bot logs a warning and accepts everyone.
+- **Compose Manager plugin:** put this folder on a share and run Option A from its
+  console.
+- **Docker tab / Community Applications:** use `unraid-template/flyvpn-control.xml`
+  (replace the `ypadlyak` namespace with your own image, or build locally). It maps port
+  `8787`, the `/data` volume to `/mnt/user/appdata/flyvpn-control`, and exposes every env
+  var below as a template field.
+
+### Pre-built image
+
+CI publishes a multi-arch image (amd64 + arm64) to
+`ghcr.io/ypadlyak/flyvpn-control`. Swap `build:`/`docker build` for that image to skip
+building on the host. (It's a private package by default — make it public or log in to
+pull.)
+
+## Configuration
+
+All configuration is via environment variables (see `.env.example`):
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `FLY_API_TOKEN` | yes | — | Fly.io API token (app create/destroy). |
+| `FLY_ORG` | yes | `personal` | Fly organisation slug. |
+| `TAILSCALE_API_KEY` | yes¹ | — | Tailscale Admin API key (ACL r/w, auth-key create, devices write). |
+| `TELEGRAM_BOT_TOKEN` | no | — | Enables the Telegram bot if set. |
+| `TELEGRAM_ALLOWED_IDS` | no² | — | Comma-separated chat IDs allowed to control the VPN. |
+| `FLY_APP_NAME` | no | auto | Override the (globally-unique) Fly app name; auto-generated and persisted otherwise. |
+| `VM_MEMORY` | no | `512` | Memory (MB) for the exit-node machine. |
+| `MAX_NODE_HOURS` | no | `8` | Auto-stop the node after N hours (cost cap; `0` disables). |
+| `MONITOR_INTERVAL` | no | `120` | Seconds between max-age checks. |
+| `PORT` | no | `8787` | Web panel port. |
+| `TS_LOGIN_SERVER` | no | — | Headscale server URL (self-hosted control server). |
+
+¹ Not needed if using a Headscale `TS_LOGIN_SERVER`.
+² Required *in practice* if the bot is enabled — the bot refuses to start without it.
+
+## Telegram bot (optional, control from anywhere)
+
+1. Message **@BotFather** → `/newbot` → put the token in `TELEGRAM_BOT_TOKEN`.
+2. Each person messages **@userinfobot** to get their numeric chat ID; put them
+   (comma-separated) in `TELEGRAM_ALLOWED_IDS`.
+3. Restart the container. In the chat: `/start` → tap a country; ⏹ Stop appears only
+   while a node is running.
+
+> The bot **refuses to start** with an empty `TELEGRAM_ALLOWED_IDS` (deny-by-default) —
+> otherwise anyone who found the bot could control your VPN.
 
 ## Verifying your tokens
 
@@ -84,26 +126,26 @@ On startup the container logs a credential check, e.g.:
 ✅ tailscale_acl_setup   auto-approve configured
 ```
 
-A ❌ means switching won't work until you fix that token/scope. You can re-check any
-time at **`http://<host>:8787/healthz`** — returns `200` when all green, `503` otherwise.
-The Tailscale check is idempotent and also ensures the exit-node auto-approver exists.
+A ❌ means switching won't work until you fix that token/scope. Re-check any time at
+**`http://<host>:8787/healthz`** — `200` when all green, `503` otherwise. The Tailscale
+check is idempotent and also ensures the exit-node auto-approver exists.
 
 ## Reaching the panel while an exit node is active
 
-When a phone selects the exit node, Tailscale routes **all** its traffic through the
+When a device selects the exit node, Tailscale routes **all** its traffic through the
 node — including to your home LAN. So open the panel at the **server's Tailscale
 address**, not its LAN IP: traffic between tailnet peers goes direct and bypasses the
 exit node, so `http://<server>.<tailnet>.ts.net:8787` (or the `100.x` Tailscale IP)
-stays reachable. Bookmark *that* on the phones. (Alternatively, enable "Allow local
-network access" in the Tailscale exit-node settings.)
+stays reachable. Bookmark *that* on phones. (Alternatively, enable "Allow local network
+access" in the Tailscale exit-node settings.)
 
 The Telegram bot is unaffected — it runs on the server and reaches Telegram over the
-server's own connection regardless of which exit node a phone uses.
+server's own connection regardless of which exit node a device uses.
 
 ## Securing the web panel
 
-The panel has no login. Keep it private by **only exposing it on your tailnet** —
-don't port-forward 8787 to the internet. The Telegram bot works from anywhere and is
+The panel has no login. Keep it private by **only exposing it on your tailnet** — don't
+port-forward 8787 to the internet. The Telegram bot works from anywhere and is
 access-listed (`TELEGRAM_ALLOWED_IDS`).
 
 ## Cost & auto-teardown
