@@ -5,7 +5,9 @@ run in a worker thread so the async event loop stays responsive.
 
 Env:
   FLY_API_TOKEN          Fly.io API token            (required)
-  TAILSCALE_API_KEY      Tailscale Admin API key     (required for SaaS)
+  TS_OAUTH_CLIENT_ID     Tailscale OAuth client ID   (required for SaaS)
+  TS_OAUTH_CLIENT_SECRET Tailscale OAuth secret      (required for SaaS)
+  TAILSCALE_API_KEY      legacy API key, used only without OAuth
   TELEGRAM_BOT_TOKEN     enable the bot if set        (optional)
   TELEGRAM_ALLOWED_IDS   comma-separated chat IDs     (required if bot on)
   PORT                   web panel port (default 8787)

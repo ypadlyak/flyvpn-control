@@ -92,7 +92,9 @@ All configuration is via environment variables (see `.env.example`):
 |----------|----------|---------|---------|
 | `FLY_API_TOKEN` | yes | — | Fly.io API token (app create/destroy). |
 | `FLY_ORG` | yes | `personal` | Fly organisation slug. |
-| `TAILSCALE_API_KEY` | yes¹ | — | Tailscale Admin API key (ACL r/w, auth-key create, devices write). |
+| `TS_OAUTH_CLIENT_ID` | yes¹ | — | Tailscale OAuth client ID (see scopes below). |
+| `TS_OAUTH_CLIENT_SECRET` | yes¹ | — | Tailscale OAuth client secret. |
+| `TAILSCALE_API_KEY` | no | — | Legacy: Tailscale Admin API key, used only if no OAuth client is set. Expires after ≤90 days. |
 | `TELEGRAM_BOT_TOKEN` | no | — | Enables the Telegram bot if set. |
 | `TELEGRAM_ALLOWED_IDS` | no² | — | Comma-separated chat IDs allowed to control the VPN. |
 | `FLY_APP_NAME` | no | auto | Override the (globally-unique) Fly app name; auto-generated and persisted otherwise. |
@@ -103,6 +105,17 @@ All configuration is via environment variables (see `.env.example`):
 | `TS_LOGIN_SERVER` | no | — | Headscale server URL (self-hosted control server). |
 
 ¹ Not needed if using a Headscale `TS_LOGIN_SERVER`.
+
+**Tailscale OAuth client:** create one at
+<https://login.tailscale.com/admin/settings/oauth> with these scopes:
+
+- Keys → **Auth Keys: Write**, tag `tag:ephemeral-vpn`
+- Devices → **Core: Write**, tag `tag:ephemeral-vpn`
+- General → **Policy File: Write**
+
+`tag:ephemeral-vpn` must be listed in `tagOwners` in your tailnet policy. Unlike
+API keys, OAuth clients don't expire. The controller swaps the client for
+short-lived (1 h) access tokens and refreshes them automatically.
 ² Required *in practice* if the bot is enabled — the bot refuses to start without it.
 
 ## Telegram bot (optional, control from anywhere)

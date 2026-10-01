@@ -45,9 +45,15 @@
   <Config Name="FLY_ORG" Target="FLY_ORG" Default="personal" Mode=""
     Description="Fly.io organisation slug (usually 'personal')." Type="Variable"
     Display="always" Required="true" Mask="false">personal</Config>
+  <Config Name="TS_OAUTH_CLIENT_ID" Target="TS_OAUTH_CLIENT_ID" Default="" Mode=""
+    Description="Tailscale OAuth client ID. Scopes: Auth Keys Write + Devices Core Write (tag:ephemeral-vpn), Policy File Write."
+    Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="TS_OAUTH_CLIENT_SECRET" Target="TS_OAUTH_CLIENT_SECRET" Default="" Mode=""
+    Description="Tailscale OAuth client secret." Type="Variable"
+    Display="always" Required="true" Mask="true"/>
   <Config Name="TAILSCALE_API_KEY" Target="TAILSCALE_API_KEY" Default="" Mode=""
-    Description="Tailscale Admin API key with ACL read/write + auth-key create scopes."
-    Type="Variable" Display="always" Required="true" Mask="true"/>
+    Description="Legacy: Tailscale Admin API key (expires after 90 days). Used only if the OAuth client is not set."
+    Type="Variable" Display="advanced" Required="false" Mask="true"/>
   <Config Name="TELEGRAM_BOT_TOKEN" Target="TELEGRAM_BOT_TOKEN" Default="" Mode=""
     Description="Optional. Telegram bot token from @BotFather to enable the bot."
     Type="Variable" Display="always" Required="false" Mask="true"/>

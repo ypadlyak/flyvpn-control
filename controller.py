@@ -26,7 +26,12 @@ from flyexit.session import LaunchStatus, PreflightStatus, VPNSession
 REGION_LABELS: dict[str, str] = dict(FLY_REGIONS)
 
 FLY_ORG = os.environ.get("FLY_ORG", "personal")
+# Tailscale auth: an OAuth client (never expires) is preferred; the legacy
+# TAILSCALE_API_KEY (expires after <= 90 days) is the fallback.
+TS_OAUTH_CLIENT_ID = os.environ.get("TS_OAUTH_CLIENT_ID", "")
+TS_OAUTH_CLIENT_SECRET = os.environ.get("TS_OAUTH_CLIENT_SECRET", "")
 TS_API_KEY = os.environ.get("TAILSCALE_API_KEY", "")
+TS_AUTH_CONFIGURED = bool((TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET) or TS_API_KEY)
 TS_LOGIN_SERVER = os.environ.get("TS_LOGIN_SERVER", "")  # Headscale, optional
 VM_MEMORY = int(os.environ.get("VM_MEMORY", "512"))
 
@@ -55,8 +60,54 @@ class Check:
     detail: str = ""
 
 
+# Refresh OAuth access tokens this many seconds before they expire (they last 1 h).
+_TOKEN_REFRESH_MARGIN = 60
+_token_lock = threading.Lock()
+_token = ""
+_token_expires_at = 0.0
+
+
+def _ts_token() -> str:
+    """Return a Tailscale API bearer token: a fresh OAuth access token, else the API key.
+
+    OAuth tokens are cached until shortly before expiry. Raises on a failed
+    token exchange. Returns "" if no Tailscale auth is configured.
+    """
+    global _token, _token_expires_at  # noqa: PLW0603
+    if not (TS_OAUTH_CLIENT_ID and TS_OAUTH_CLIENT_SECRET):
+        return TS_API_KEY
+
+    import httpx
+
+    with _token_lock:
+        if time.monotonic() < _token_expires_at - _TOKEN_REFRESH_MARGIN:
+            return _token
+        resp = httpx.post(
+            "https://api.tailscale.com/api/v2/oauth/token",
+            data={
+                "client_id": TS_OAUTH_CLIENT_ID,
+                "client_secret": TS_OAUTH_CLIENT_SECRET,
+                "grant_type": "client_credentials",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        _token = body["access_token"]
+        _token_expires_at = time.monotonic() + int(body.get("expires_in", 3600))
+        return _token
+
+
 def _new_session() -> VPNSession:
-    return VPNSession(ts_api_key=TS_API_KEY, ts_login_server=TS_LOGIN_SERVER)
+    # A session lives only for one switch() (well under the 1 h token TTL), so a
+    # token fetched here stays valid for the session's lifetime.
+    if TS_LOGIN_SERVER:
+        return VPNSession(ts_login_server=TS_LOGIN_SERVER)
+    try:
+        token = _ts_token()
+    except Exception as exc:  # noqa: BLE001
+        raise ControllerError(f"Tailscale OAuth token exchange failed: {exc}") from exc
+    return VPNSession(ts_api_key=token)
 
 
 def _purge_exit_devices() -> int:
@@ -66,7 +117,7 @@ def _purge_exit_devices() -> int:
     offline ephemeral device would otherwise force the next node to register as
     ``fly-vpn-exit-1``. Best-effort — never raises. Returns the count removed.
     """
-    if not TS_API_KEY or TS_LOGIN_SERVER:
+    if not TS_AUTH_CONFIGURED or TS_LOGIN_SERVER:
         return 0
 
     import httpx
@@ -74,12 +125,13 @@ def _purge_exit_devices() -> int:
     from flyexit.constants import TS_EXIT_HOSTNAME
     from flyexit.tailscale_api import TailscaleAPIClient
 
-    client = TailscaleAPIClient(TS_API_KEY)
     removed = 0
     try:
+        token = _ts_token()
+        client = TailscaleAPIClient(token)
         resp = httpx.get(
             "https://api.tailscale.com/api/v2/tailnet/-/devices",
-            headers={"Authorization": f"Bearer {TS_API_KEY}"},
+            headers={"Authorization": f"Bearer {token}"},
             timeout=15,
         )
         resp.raise_for_status()
@@ -163,13 +215,22 @@ class Controller:
     def _check_tailscale() -> list[Check]:
         if TS_LOGIN_SERVER:
             return [Check("tailscale", True, "Headscale mode — SaaS API checks skipped.")]
-        if not TS_API_KEY:
-            return [Check("tailscale_key", False, "No TAILSCALE_API_KEY set.")]
+        if not TS_AUTH_CONFIGURED:
+            return [
+                Check(
+                    "tailscale_key",
+                    False,
+                    "No Tailscale auth set (TS_OAUTH_CLIENT_ID/SECRET or TAILSCALE_API_KEY).",
+                )
+            ]
 
         from flyexit.acl_setup import setup_acl
         from flyexit.tailscale_api import TailscaleAPIClient
 
-        client = TailscaleAPIClient(TS_API_KEY)
+        try:
+            client = TailscaleAPIClient(_ts_token())
+        except Exception as exc:  # noqa: BLE001
+            return [Check("tailscale_oauth", False, f"OAuth token exchange failed: {exc}")]
 
         # 1. ACL read — proves the key is valid and has ACL read scope.
         try:
@@ -221,9 +282,10 @@ class Controller:
         """Tear down whatever is running and bring up an exit node in *region*."""
         if region not in REGION_LABELS:
             raise ControllerError(f"Unknown region '{region}'.")
-        if not TS_API_KEY and not TS_LOGIN_SERVER:
+        if not TS_AUTH_CONFIGURED and not TS_LOGIN_SERVER:
             raise ControllerError(
-                "No Tailscale auth configured (set TAILSCALE_API_KEY)."
+                "No Tailscale auth configured "
+                "(set TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET)."
             )
 
         with self._lock:
