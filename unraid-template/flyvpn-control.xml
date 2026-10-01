@@ -16,8 +16,8 @@
     (tap a flag). The server only orchestrates — your phones use the Tailscale app to
     select the auto-approved exit node. Great for "Netflix in another country, now."
 
-    Requires a Fly.io API token and a Tailscale Admin API key (ACL read/write + auth-key
-    create scopes). Telegram bot is optional. After each country switch, re-pick the exit
+    Requires a Fly.io API token and a Tailscale OAuth client (Auth Keys Write + Devices
+    Core Write for tag:ephemeral-vpn, Policy File Write). Telegram bot is optional. After each country switch, re-pick the exit
     node in the Tailscale app on your devices (fly-vpn is one-node-at-a-time today).
 
     Visit /healthz to verify your tokens and scopes.
